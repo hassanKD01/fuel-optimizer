@@ -1,4 +1,5 @@
 import json
+import logging
 
 import openrouteservice
 from openrouteservice.directions import directions
@@ -7,7 +8,9 @@ from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from geopy.distance import geodesic
 
+from optimizer.exceptions import NoFuelStationInRange
 
+logging.basicConfig(level=logging.INFO)
 client = openrouteservice.Client(key=settings.ORS_API_KEY)
 
 @csrf_exempt
@@ -24,16 +27,22 @@ def optimize_fuel(request):
         try:
             route_data = directions(client, coordinates=[start_coords, finish_coords], profile='driving-car', format='geojson')
         except Exception as e:
+            logging.exception("Fetching directions failed for start: %s, finish: %s", start_coords, finish_coords)
             return JsonResponse({'error': f'Routing failed: {str(e)}'}, status=400)
         route = route_data["features"][0]["geometry"]["coordinates"]
         try:
             fuel_stops = calculate_fuel_stops(route)
-        except Exception as e:
-            return JsonResponse({'error': f'{str(e)}'}, status=200)
+        except NoFuelStationInRange as e:
+            logging.error(str(e))
+            return JsonResponse({
+                'route': route_data["features"],
+                'fuel_stops': [],
+                'total_cost': ""
+            })
         total_cost = calculate_total_cost(fuel_stops)
 
         return JsonResponse({
-            'route': route,
+            'route': route_data["features"],
             'fuel_stops': fuel_stops,
             'total_cost': total_cost
         })
@@ -70,7 +79,7 @@ def calculate_fuel_stops(coordinates):
                 current_location = (fuel_station['latitude'], fuel_station['longitude'])
                 total_distance = 0
             else:
-                raise Exception("No fuel station found within range")
+                raise NoFuelStationInRange("No fuel station found within range")
 
         current_fuel -= distance / fuel_efficiency
         current_location = next_location

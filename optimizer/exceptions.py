@@ -1,0 +1,2 @@
+class NoFuelStationInRange(Exception):
+    pass
